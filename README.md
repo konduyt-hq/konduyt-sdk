@@ -1,122 +1,157 @@
 # Konduyt SDK
 
-**One integration. Every payment. Everywhere.**
+One integration. Every payment. Everywhere.
 
-The Konduyt SDK unifies Stripe, PayPal, M-Pesa, Flutterwave, Razorpay and many others behind a single line of code — with tax calculation built in.
+The Konduyt SDK is the public interface to the Konduyt Money Intelligence Engine.
+Developers write business actions. Konduyt decides which provider to use, routes intelligently, handles retries, and explains every decision.
 
-## Quick start
+---
 
-### JavaScript (CDN — no npm needed)
+## Two SDKs. One boundary.
+
+| | Client SDK | Server SDK |
+|---|---|---|
+| **Key type** | Publishable key (`pk_...`) | Secret key (`sk_...`) |
+| **Environment** | Browser, mobile, frontend | Node.js, server only |
+| **Checkout** | ✓ | — |
+| **Provider recommendation** | ✓ | — |
+| **Transaction status** | ✓ | ✓ |
+| **List transactions** | ✗ | ✓ |
+| **Refunds** | ✗ | ✓ |
+| **Customer management** | ✗ | ✓ |
+| **People management** | ✗ | ✓ |
+| **Tax calculation** | ✗ | ✓ |
+| **Payroll (draft/calculate/submit)** | ✗ | ✓ |
+| **Payroll execution** | ✗ | ✗ (dashboard only) |
+| **Webhooks** | ✗ | ✓ |
+
+> Payroll execution is dashboard-only by design. Code prepares payroll. Humans approve payroll.
+> See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full decision record.
+
+---
+
+## Client SDK
 
 ```html
 <script src="https://cdn.konduyt.dev/v1/konduyt.js"></script>
 <script>
-  const konduyt = new Konduyt({ publishableKey: 'pk_live_...' })
+  const konduyt = new KonduytClient({ publishableKey: 'pk_live_...' })
 
-  konduyt.checkout({
-    amount: 2000,
-    currency: 'KES',
-    theme: { color: '#FF5C35', buttonText: 'Pay now' }
-  })
+  // Ask which provider Konduyt recommends and why
+  const rec = await konduyt.recommend({ currency: 'KES' })
+  console.log(rec.recommended)  // 'mpesa'
+  console.log(rec.reason)       // '99.1% success rate · 1.50% fee · 8000ms avg'
 
-  konduyt.on('payment.success', (txn) => {
-    console.log('Paid!', txn.transaction_id)
-  })
-
-  konduyt.on('payment.failed', (txn) => {
-    console.error('Failed', txn.error.message)
-  })
+  // Launch the checkout sheet — providers ranked by intelligence
+  await konduyt
+    .on('payment.success', txn  => console.log('Paid:', txn.transaction_id))
+    .on('payment.failed',  err  => console.error('Failed:', err.error.message))
+    .on('provider.changed', e  => console.log('Switched to', e.to))
+    .on('tax.calculated',  tax => console.log('Tax owed:', tax.total_owed))
+    .checkout({ amount: 2000, currency: 'KES', theme: { brandName: 'My Store' } })
 </script>
 ```
 
-### Python
+### Events
 
-```bash
-pip install konduyt
-```
-
-```python
-from konduyt import Konduyt
-
-kd = Konduyt(secret_key='sk_live_...')
-result = kd.charge(amount=2000, currency='KES', vendor='mpesa', phone='+254712345678')
-print(result.status)
-```
-
-### PHP
-
-```bash
-composer require konduyt/sdk
-```
-
-```php
-$konduyt = new Konduyt\Client(['secret_key' => 'sk_live_...']);
-$result  = $konduyt->charge(['amount' => 2000, 'currency' => 'KES']);
-```
-
-### Kotlin (Android)
-
-```gradle
-implementation 'dev.konduyt:sdk:1.0.0'
-```
-
-```kotlin
-val kd = Konduyt(publishableKey = "pk_live_...")
-kd.checkout(amount = 2000, currency = "KES") { result ->
-    println(result.status)
-}
-```
-
-### Dart (Flutter)
-
-```yaml
-dependencies:
-  konduyt: ^1.0.0
-```
-
-```dart
-final kd = Konduyt(publishableKey: 'pk_live_...');
-final result = await kd.charge(amount: 2000, currency: 'KES');
-```
-
-## Webhook events
-
-```javascript
-konduyt.on('payment.success',  (txn) => { /* save to db, redirect */ })
-konduyt.on('payment.failed',   (txn) => { /* show error to user */ })
-konduyt.on('payment.refunded', (txn) => { /* update records */ })
-```
-
-## Tax calculation
-
-```javascript
-const tax = await konduyt.tax({ amount: 2000, currency: 'KES', jurisdiction: 'KE' })
-console.log(tax.total_owed)    // amount owed
-console.log(tax.where_to_pay)  // itax.kra.go.ke
-console.log(tax.deadline)      // 20th of following month
-```
-
-## Supported payment methods
-
-| Provider | Region |
+| Event | When |
 |---|---|
-| Stripe | Global cards |
-| PayPal | Global |
-| M-Pesa | East Africa |
-| Flutterwave | Africa |
-| Razorpay | India |
-| GrabPay | Southeast Asia |
-| PIX | Brazil |
-| + many others | — |
+| `checkout.opened` | Checkout sheet shown |
+| `checkout.closed` | Checkout sheet dismissed |
+| `payment.started` | User confirmed payment |
+| `payment.success` | Payment completed |
+| `payment.failed` | Payment failed |
+| `provider.changed` | Konduyt switched providers |
+| `tax.calculated` | Tax computed for transaction |
+| `recommend.ready` | Recommendation available |
 
-## Pricing
+---
 
-**Local — Free forever.** One jurisdiction, unlimited vendors, full SDK.
+## Server SDK
 
-**Global — $49/month per project.** Unlimited jurisdictions, cross-border reconciliation, multi-currency reporting.
+```javascript
+const { KonduytServer } = require('@konduyt/sdk/server')
+// or: import { KonduytServer } from '@konduyt/sdk/server'
 
-[Get started at konduyt.dev →](https://konduyt.dev)
+const konduyt = new KonduytServer({ secretKey: process.env.KONDUYT_SECRET_KEY })
 
-## License
+// List transactions
+const txns = await konduyt.payments.list(projectId, { status: 'success', limit: '50' })
 
-MIT
+// Issue a refund
+await konduyt.payments.refund(projectId, transactionId)
+
+// Calculate tax
+const tax = await konduyt.tax.calculate({ amount: 50000, currency: 'KES', jurisdiction: 'KE' })
+
+// People management (server only)
+const person = await konduyt.people.create(projectId, {
+  name:    'Jane Doe',
+  role:    'contractor',
+  vendor:  'mpesa',
+  amount:  15000,
+  currency: 'KES',
+})
+
+// Payroll — prepare and submit for human approval
+const draft = await konduyt.payroll.draft(projectId, { period: '2026-07', people: [person.id] })
+const calc  = await konduyt.payroll.calculate(projectId, draft.id)
+const valid = await konduyt.payroll.validate(projectId, draft.id)
+await konduyt.payroll.submit(projectId, draft.id)
+// → A reviewer approves in the Konduyt dashboard before payments execute
+```
+
+---
+
+## Provider Intelligence
+
+Konduyt selects the best provider automatically. The recommendation is always explainable.
+
+```javascript
+// Client SDK
+const rec = await konduyt.recommend({ currency: 'NGN' })
+// {
+//   recommended: 'paystack',
+//   reason:      '97.8% success rate · 1.50% fee · 4000ms avg',
+//   score:       0.891,
+//   fee:         0.015,
+//   alternatives: [{ vendor: 'flutterwave', score: 0.874, ... }]
+// }
+
+// Server SDK
+const health = await konduyt.providerHealth(projectId)
+const why    = await konduyt.explainDecision(projectId, transactionId)
+```
+
+---
+
+## Installation
+
+```bash
+npm install @konduyt/sdk
+```
+
+Or via CDN:
+```html
+<script src="https://cdn.konduyt.dev/v1/konduyt.js"></script>
+```
+
+---
+
+## Architecture
+
+The SDK is organized around business capabilities, not payment providers.
+
+Write `konduyt.checkout()` not `konduyt.stripeCheckout()`.
+Providers are implementation details. Business capabilities are the public API.
+
+Read [ARCHITECTURE.md](./ARCHITECTURE.md) before adding new SDK methods.
+
+---
+
+## Links
+
+- [Documentation](https://konduyt.dev/docs)
+- [Dashboard](https://konduyt.dev/dashboard)
+- [Architecture decisions](./ARCHITECTURE.md)
+- [GitHub](https://github.com/konduyt-hq)
