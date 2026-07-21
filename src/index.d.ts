@@ -1,18 +1,14 @@
 /**
  * Konduyt SDK — TypeScript Definitions
- * https://konduyt.dev
+ *
+ * Two SDKs, one boundary:
+ *   KonduytClient — browser/mobile, publishable key
+ *   KonduytServer — server only, secret key
+ *
+ * See ARCHITECTURE.md for the full capability matrix.
  */
 
-export interface KonduytConfig {
-  /** Your publishable key (pk_live_... or pk_test_...) */
-  publishableKey: string
-}
-
-export interface RecommendOptions {
-  currency?: string
-  country?:  string
-  amount?:   number
-}
+// ── Shared types ──────────────────────────────────────────────────────────────
 
 export interface RecommendResult {
   recommended:  string | null
@@ -25,12 +21,66 @@ export interface RecommendResult {
   latency_ms:   number | null
   features:     string[]
   note:         string
-  alternatives: Array<{
-    vendor:           string
-    score:            number
-    supported:        boolean
-    rejection_reason: string | null
-  }>
+  alternatives: Array<{ vendor: string; score: number; supported: boolean; rejection_reason: string | null }>
+}
+
+export interface TransactionResult {
+  status:           'success' | 'failed' | 'pending' | 'refunded'
+  transaction_id:   string
+  amount:           number
+  currency:         string
+  vendor:           string
+  vendor_reference?: string
+  decision?: { reason: string; score: number; alternatives: unknown[] }
+  error?: { code?: string; message: string }
+}
+
+export interface TaxJurisdiction {
+  name:            string
+  abbreviation:    string
+  rate:            number
+  amount_owed:     number
+  filing_deadline: string
+  where_to_pay:    string
+}
+
+export interface TaxResult {
+  total_owed:   number
+  currency:     string
+  jurisdiction: string
+  taxes:        TaxJurisdiction[]
+}
+
+export interface ProviderHealth {
+  vendor:        string
+  name:          string
+  success_rate:  number
+  avg_latency_ms: number
+  total_txns:    number
+  typical_fee_pct: number
+  supported_currencies: string[]
+  status:        string
+}
+
+// ── Event map ─────────────────────────────────────────────────────────────────
+
+export type KonduytEventMap = {
+  'checkout.opened':   { amount: number; currency: string }
+  'checkout.closed':   { reason: 'dismissed' | 'error'; error?: string }
+  'payment.started':   { amount: number; currency: string; vendor?: string }
+  'payment.success':   TransactionResult
+  'payment.completed': TransactionResult
+  'payment.failed':    { error: { code?: string; message: string }; vendor?: string }
+  'provider.changed':  { from: string; to: string; reason: string }
+  'tax.calculated':    TaxResult
+  'recommend.ready':   RecommendResult
+}
+
+// ── Client SDK (publishable key) ──────────────────────────────────────────────
+
+export interface KonduytClientConfig {
+  /** Publishable key: pk_live_... or pk_test_... — safe for browser use */
+  publishableKey: string
 }
 
 export interface CheckoutTheme {
@@ -47,130 +97,94 @@ export interface CheckoutOptions {
   metadata?: Record<string, unknown>
 }
 
-export interface ChargeOptions {
-  amount:    number
-  currency?: string
-  vendor?:   string
-  customer?: { email?: string; phone?: string }
-  metadata?: Record<string, unknown>
-}
+export declare class KonduytClient {
+  constructor(config: KonduytClientConfig)
 
-export interface TaxOptions {
-  amount:       number
-  currency:     string
-  jurisdiction: string
-}
+  /** Ask which provider Konduyt recommends for this currency and why */
+  recommend(options?: { currency?: string; country?: string; amount?: number }): Promise<RecommendResult>
 
-export interface TaxJurisdiction {
-  name:             string
-  abbreviation:     string
-  rate:             number
-  amount_owed:      number
-  filing_deadline:  string
-  where_to_pay:     string
-}
-
-export interface TaxResult {
-  total_owed:   number
-  currency:     string
-  jurisdiction: string
-  taxes:        TaxJurisdiction[]
-}
-
-export interface TransactionResult {
-  status:            'success' | 'failed' | 'pending' | 'refunded'
-  transaction_id:    string
-  amount:            number
-  currency:          string
-  vendor:            string
-  vendor_reference?: string
-  tax?:              TaxResult
-  decision?: {
-    reason:       string
-    score:        number
-    alternatives: Array<{ vendor: string; score: number }>
-  }
-  error?: {
-    code:    string
-    message: string
-  }
-}
-
-/** All events emitted by the Konduyt SDK */
-export type KonduytEventMap = {
-  'checkout.opened':   { amount: number; currency: string }
-  'checkout.closed':   { reason: 'dismissed' | 'error'; error?: string }
-  'payment.started':   { amount: number; currency: string; vendor?: string }
-  'payment.success':   TransactionResult
-  'payment.completed': TransactionResult
-  'payment.failed':    { error: { code?: string; message: string }; vendor?: string }
-  'provider.changed':  { from: string; to: string; reason: string }
-  'tax.calculated':    TaxResult
-  'recommend.ready':   RecommendResult
-}
-
-export declare class Konduyt {
-  constructor(config: KonduytConfig)
-
-  /**
-   * Ask Konduyt which payment provider it recommends for this currency and why.
-   * Returns full explanation with fee, success rate, latency, and alternatives.
-   *
-   * @example
-   * const rec = await konduyt.recommend({ currency: 'KES' })
-   * console.log(rec.recommended)   // 'mpesa'
-   * console.log(rec.reason)        // '99.1% success rate · 1.50% fee'
-   * console.log(rec.explanation)   // ['99.1% success rate', '1.50% fee', '8000ms avg settlement']
-   */
-  recommend(options?: RecommendOptions): Promise<RecommendResult>
-
-  /**
-   * Launch the Konduyt checkout sheet.
-   * Providers are ranked by Konduyt's intelligence — best option first.
-   * Shows the reason for each recommendation in the UI.
-   */
+  /** Launch the Konduyt checkout sheet */
   checkout(options: CheckoutOptions): Promise<TransactionResult | null>
 
-  /**
-   * Low-level charge without UI.
-   * Use this when you have built your own payment form.
-   */
-  charge(options: ChargeOptions): Promise<TransactionResult>
-
-  /**
-   * Calculate tax obligations for a transaction.
-   * Returns the amount owed, filing deadline, and step-by-step guidance.
-   */
-  tax(options: TaxOptions): Promise<TaxResult>
-
-  /**
-   * Check the current status of a transaction.
-   */
+  /** Check transaction status */
   status(transactionId: string): Promise<TransactionResult>
 
-  /**
-   * Register a handler for a Konduyt event.
-   * Returns `this` for chaining.
-   *
-   * @example
-   * konduyt
-   *   .on('payment.success', txn => db.save(txn))
-   *   .on('payment.failed',  err => alert(err.error.message))
-   *   .on('tax.calculated',  tax => showTaxBanner(tax.total_owed))
-   *   .on('provider.changed', e => console.log('switched to', e.to))
-   */
-  on<K extends keyof KonduytEventMap>(
-    event:   K,
-    handler: (data: KonduytEventMap[K]) => void
-  ): this
+  /** Register an event handler. Returns this for chaining. */
+  on<K extends keyof KonduytEventMap>(event: K, handler: (data: KonduytEventMap[K]) => void): this
 
-  /**
-   * Remove a handler. If no handler provided, removes all handlers for the event.
-   */
-  off<K extends keyof KonduytEventMap>(
-    event:    K,
-    handler?: (data: KonduytEventMap[K]) => void
-  ): this
+  /** Remove an event handler */
+  off<K extends keyof KonduytEventMap>(event: K, handler?: (data: KonduytEventMap[K]) => void): this
 }
 
-export default Konduyt
+/** Backward-compatible alias */
+export declare const Konduyt: typeof KonduytClient
+
+// ── Server SDK (secret key) ───────────────────────────────────────────────────
+
+export interface KonduytServerConfig {
+  /** Secret key: sk_live_... or sk_test_... — NEVER use in browser code */
+  secretKey: string
+}
+
+export declare class PaymentsNamespace {
+  list(projectId: string, options?: Record<string, string>): Promise<{ total: number; transactions: TransactionResult[] }>
+  refund(projectId: string, transactionId: string): Promise<{ status: string; transaction_id: string }>
+  summary(projectId: string): Promise<{ vendors: unknown[]; tax_summary: unknown[] }>
+}
+
+export declare class CustomersNamespace {
+  list(projectId: string): Promise<unknown[]>
+  get(projectId: string, customerId: string): Promise<unknown>
+  create(projectId: string, data: Record<string, unknown>): Promise<unknown>
+}
+
+export declare class PeopleNamespace {
+  /**
+   * Server-side only. Contains sensitive personal and payment data.
+   * Never available via publishable key.
+   */
+  list(projectId: string): Promise<unknown[]>
+  get(projectId: string, personId: string): Promise<unknown>
+  create(projectId: string, data: Record<string, unknown>): Promise<unknown>
+  update(projectId: string, personId: string, data: Record<string, unknown>): Promise<unknown>
+}
+
+export declare class PayrollNamespace {
+  /**
+   * Payroll preparation only. No execution via SDK.
+   * Code prepares payroll. Humans approve in dashboard. Dashboard executes.
+   */
+  draft(projectId: string, data: Record<string, unknown>): Promise<unknown>
+  calculate(projectId: string, draftId: string): Promise<unknown>
+  validate(projectId: string, draftId: string): Promise<unknown>
+  submit(projectId: string, draftId: string): Promise<unknown>
+  list(projectId: string): Promise<unknown[]>
+  // run()     — does not exist. Dashboard only.
+  // execute() — does not exist. Dashboard only.
+}
+
+export declare class TaxNamespace {
+  calculate(data: { amount: number; currency: string; jurisdiction: string }): Promise<TaxResult>
+  report(projectId: string): Promise<unknown>
+}
+
+export declare class WebhooksNamespace {
+  list(projectId: string): Promise<unknown[]>
+  create(projectId: string, data: Record<string, unknown>): Promise<unknown>
+  delete(projectId: string, id: string): Promise<unknown>
+}
+
+export declare class KonduytServer {
+  constructor(config: KonduytServerConfig)
+
+  readonly payments:  PaymentsNamespace
+  readonly customers: CustomersNamespace
+  readonly people:    PeopleNamespace
+  readonly payroll:   PayrollNamespace
+  readonly tax:       TaxNamespace
+  readonly webhooks:  WebhooksNamespace
+
+  providerHealth(projectId: string): Promise<ProviderHealth[]>
+  explainDecision(projectId: string, transactionId: string): Promise<unknown>
+  simulateRouting(projectId: string, options?: Record<string, string>): Promise<unknown>
+}
